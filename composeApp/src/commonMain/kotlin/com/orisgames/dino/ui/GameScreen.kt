@@ -3,9 +3,12 @@ package com.orisgames.dino.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,9 +16,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -44,23 +54,33 @@ import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.orisgames.dino.game.GameConfig
 import com.orisgames.dino.game.GameEngine
 import com.orisgames.dino.game.GamePhase
-import com.orisgames.dino.storage.HighScoreStorage
+import com.orisgames.dino.net.GlobalLeaderboardClient
+import com.orisgames.dino.storage.LeaderboardStorage
+import com.orisgames.dino.storage.ScoreEntry
 import kotlin.math.min
 import kotlin.math.sin
+import kotlinx.coroutines.launch
 
 @Composable
-fun GameScreen(storage: HighScoreStorage) {
+fun GameScreen(storage: LeaderboardStorage) {
     val engine = remember { GameEngine(storage) }
     var frameTick by remember { mutableLongStateOf(0L) }
     var jumpKeyHeld by remember { mutableStateOf(false) }
+    var showLeaderboard by remember { mutableStateOf(false) }
+    var globalTop by remember { mutableStateOf<List<ScoreEntry>?>(null) }
+    var globalFailed by remember { mutableStateOf(false) }
+    val globalClient = remember { GlobalLeaderboardClient(GameConfig.GLOBAL_LEADERBOARD_URL) }
+    val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val textMeasurer = rememberTextMeasurer()
 
@@ -77,8 +97,30 @@ fun GameScreen(storage: HighScoreStorage) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+    // Keep the game focused for keyboard input, and re-grab focus after the
+    // name-entry field goes away.
+    LaunchedEffect(engine.awaitingRecordName) {
+        if (!engine.awaitingRecordName) focusRequester.requestFocus()
+    }
+
+    // Refresh the global list every time the panel opens.
+    LaunchedEffect(showLeaderboard) {
+        if (showLeaderboard && globalClient.isEnabled) {
+            globalFailed = false
+            runCatching { globalClient.top() }
+                .onSuccess { globalTop = it }
+                .onFailure { globalFailed = true }
+        }
+    }
+
+    fun submitName(raw: String) {
+        val score = engine.score
+        val name = engine.submitRecordName(raw)
+        if (globalClient.isEnabled && name.isNotBlank()) {
+            scope.launch {
+                runCatching { globalTop = globalClient.submit(name, score) }
+            }
+        }
     }
 
     Box(
@@ -89,20 +131,21 @@ fun GameScreen(storage: HighScoreStorage) {
             .focusable()
             .onKeyEvent { event ->
                 val isJumpKey = event.key == Key.Spacebar || event.key == Key.DirectionUp
+                val blocked = showLeaderboard || engine.awaitingRecordName
                 when {
                     // Latch on KeyDown so OS auto-repeat can't fire extra
                     // taps (it would auto-restart right through the
                     // game-over screen while the key is held).
                     isJumpKey && event.type == KeyEventType.KeyDown -> {
-                        if (!jumpKeyHeld) {
+                        if (!jumpKeyHeld && !blocked) {
                             jumpKeyHeld = true
                             engine.tap()
                         }
-                        true
+                        !blocked
                     }
                     isJumpKey && event.type == KeyEventType.KeyUp -> {
                         jumpKeyHeld = false
-                        true
+                        !blocked
                     }
                     else -> false
                 }
@@ -111,11 +154,13 @@ fun GameScreen(storage: HighScoreStorage) {
                 // Raw pointer loop instead of detectTapGestures: every finger
                 // that lands counts as a tap, even while another finger is
                 // resting on the screen (small kids hold devices that way).
+                // Overlay buttons consume their downs before this handler.
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
+                        val blocked = showLeaderboard || engine.awaitingRecordName
                         event.changes.forEach { change ->
-                            if (change.changedToDown()) engine.tap()
+                            if (change.changedToDown() && !blocked) engine.tap()
                         }
                     }
                 }
@@ -126,12 +171,48 @@ fun GameScreen(storage: HighScoreStorage) {
             frameTick // snapshot read so the canvas redraws every frame
             drawGame(engine, textMeasurer)
         }
-        Hud(engine, frameTick)
+        Hud(
+            engine = engine,
+            frameTick = frameTick,
+            onShowLeaderboard = { showLeaderboard = true },
+            onSubmitName = ::submitName,
+        )
+        if (showLeaderboard) {
+            LeaderboardOverlay(
+                engine = engine,
+                globalTop = globalTop,
+                globalEnabled = globalClient.isEnabled,
+                globalFailed = globalFailed,
+                onClose = { showLeaderboard = false },
+            )
+        }
+    }
+}
+
+/**
+ * A press-to-activate button that CONSUMES its pointer events, so pressing it
+ * never doubles as a jump/start tap in the global handler.
+ */
+private fun Modifier.pressButton(onPress: () -> Unit): Modifier = pointerInput(onPress) {
+    awaitEachGesture {
+        val down = awaitFirstDown()
+        down.consume()
+        onPress()
+        while (true) {
+            val event = awaitPointerEvent()
+            event.changes.forEach { it.consume() }
+            if (event.changes.none { it.pressed }) break
+        }
     }
 }
 
 @Composable
-private fun Hud(engine: GameEngine, frameTick: Long) {
+private fun Hud(
+    engine: GameEngine,
+    frameTick: Long,
+    onShowLeaderboard: () -> Unit,
+    onSubmitName: (String) -> Unit,
+) {
     @Suppress("UNUSED_EXPRESSION")
     frameTick // snapshot read so the HUD recomposes every frame
     // safeDrawing keeps the HUD clear of the status bar / notch on Android
@@ -147,10 +228,19 @@ private fun Hud(engine: GameEngine, frameTick: Long) {
             GameText("BEST ${engine.bestScore}", 16.sp, Color(0xE6FFFFFF))
         }
 
+        if (engine.phase != GamePhase.Ready) {
+            GameText(
+                "LEVEL ${engine.level}",
+                20.sp,
+                Color(0xFFFFF3B0),
+                Modifier.align(Alignment.TopStart),
+            )
+        }
+
         if (engine.phase == GamePhase.Running && engine.celebrationTimer > 0f) {
             val progress = engine.celebrationTimer / GameConfig.CELEBRATION_SECONDS
             GameText(
-                "${engine.milestone * GameConfig.MILESTONE_STEP} POINTS!",
+                "LEVEL ${engine.level}!",
                 30.sp,
                 Color(0xFFFFC93C),
                 Modifier
@@ -161,15 +251,20 @@ private fun Hud(engine: GameEngine, frameTick: Long) {
         }
 
         when (engine.phase) {
-            GamePhase.Ready -> ReadyOverlay(engine)
-            GamePhase.GameOver -> GameOverOverlay(engine)
+            GamePhase.Ready -> ReadyOverlay(engine, onShowLeaderboard)
+            GamePhase.GameOver ->
+                if (engine.awaitingRecordName) {
+                    NameEntryOverlay(engine, onSubmitName)
+                } else {
+                    GameOverOverlay(engine, onShowLeaderboard)
+                }
             GamePhase.Running -> Unit
         }
     }
 }
 
 @Composable
-private fun BoxScope.ReadyOverlay(engine: GameEngine) {
+private fun BoxScope.ReadyOverlay(engine: GameEngine, onShowLeaderboard: () -> Unit) {
     Column(
         Modifier.align(Alignment.Center).padding(bottom = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -190,11 +285,67 @@ private fun BoxScope.ReadyOverlay(engine: GameEngine) {
             Color(0xFFFFF3B0),
             Modifier.graphicsLayer { alpha = pulse },
         )
+        Spacer(Modifier.height(24.dp))
+        PillButton("TOP 10", onShowLeaderboard)
     }
 }
 
 @Composable
-private fun BoxScope.GameOverOverlay(engine: GameEngine) {
+private fun BoxScope.NameEntryOverlay(engine: GameEngine, onSubmit: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    val nameFocus = remember { FocusRequester() }
+    Surface(
+        modifier = Modifier.align(Alignment.Center),
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xF2FFFFFF),
+        shadowElevation = 8.dp,
+    ) {
+        Column(
+            Modifier.padding(horizontal = 32.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("NEW TOP SCORE!", color = Color(0xFFDB9E0B), fontSize = 26.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Score: ${engine.score}",
+                color = Color(0xFF2D3748),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(14.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(GameConfig.MAX_NAME_LENGTH) },
+                singleLine = true,
+                placeholder = { Text("Your name") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onSubmit(name) }),
+                modifier = Modifier.width(230.dp).focusRequester(nameFocus),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Leave empty for a surprise name!",
+                color = Color(0xFF718096),
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .pressButton { onSubmit(name) }
+                    .background(Color(0xFF38A169), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 40.dp, vertical = 12.dp),
+            ) {
+                Text("SAVE", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        nameFocus.requestFocus()
+    }
+}
+
+@Composable
+private fun BoxScope.GameOverOverlay(engine: GameEngine, onShowLeaderboard: () -> Unit) {
     Surface(
         modifier = Modifier.align(Alignment.Center),
         shape = RoundedCornerShape(28.dp),
@@ -229,6 +380,15 @@ private fun BoxScope.GameOverOverlay(engine: GameEngine) {
                     fontWeight = FontWeight.Bold,
                 )
             }
+            val recordName = engine.lastRecordName
+            if (recordName != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Saved as $recordName",
+                    color = Color(0xFF718096),
+                    fontSize = 14.sp,
+                )
+            }
             Spacer(Modifier.height(18.dp))
             val ready = engine.timeSinceGameOver >= GameConfig.RESTART_LOCK_SECONDS
             val pulse = 0.55f + 0.45f * sin(engine.elapsed * 5f)
@@ -242,7 +402,8 @@ private fun BoxScope.GameOverOverlay(engine: GameEngine) {
                         scaleX = buttonScale
                         scaleY = buttonScale
                     }
-                    .background(Color(0xFF38A169), CircleShape),
+                    .background(Color(0xFF38A169), CircleShape)
+                    .pressButton { engine.tap() },
                 contentAlignment = Alignment.Center,
             ) {
                 Canvas(Modifier.size(32.dp)) {
@@ -263,7 +424,113 @@ private fun BoxScope.GameOverOverlay(engine: GameEngine) {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.graphicsLayer { alpha = if (ready) pulse else 0f },
             )
+            Spacer(Modifier.height(12.dp))
+            PillButton("TOP 10", onShowLeaderboard)
         }
+    }
+}
+
+@Composable
+private fun BoxScope.LeaderboardOverlay(
+    engine: GameEngine,
+    globalTop: List<ScoreEntry>?,
+    globalEnabled: Boolean,
+    globalFailed: Boolean,
+    onClose: () -> Unit,
+) {
+    // Scrim consumes stray taps so nothing reaches the game underneath.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pressButton { }
+            .background(Color(0x66000000)),
+    )
+    Surface(
+        modifier = Modifier.align(Alignment.Center),
+        shape = RoundedCornerShape(28.dp),
+        color = Color(0xF7FFFFFF),
+        shadowElevation = 10.dp,
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp, vertical = 22.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("TOP 10", color = Color(0xFF2D6A4F), fontSize = 30.sp, fontWeight = FontWeight.Black)
+            val subtitle = when {
+                !globalEnabled -> "This device"
+                globalFailed -> "Offline — showing this device"
+                globalTop == null -> "Loading…"
+                else -> "All players"
+            }
+            Text(subtitle, color = Color(0xFF718096), fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+
+            val entries = if (globalEnabled && !globalFailed && globalTop != null) {
+                globalTop
+            } else {
+                engine.leaderboard.entries
+            }
+            if (entries.isEmpty()) {
+                Text(
+                    "No scores yet — go play!",
+                    color = Color(0xFF2D3748),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            entries.take(GameConfig.LEADERBOARD_SIZE).forEachIndexed { index, entry ->
+                Row(
+                    Modifier.width(250.dp).padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val badgeColor = when (index) {
+                        0 -> Color(0xFFE8B70C)
+                        1 -> Color(0xFF9EA7B3)
+                        2 -> Color(0xFFC98A4B)
+                        else -> Color(0xFF74C69D)
+                    }
+                    Box(
+                        Modifier.size(26.dp).background(badgeColor, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("${index + 1}", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        entry.name,
+                        color = Color(0xFF2D3748),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(140.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "${entry.score}",
+                        color = Color(0xFF2D6A4F),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            PillButton("BACK", onClose)
+        }
+    }
+}
+
+@Composable
+private fun PillButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .pressButton(onClick)
+            .background(Color(0xB3FFFFFF), RoundedCornerShape(20.dp))
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = Color(0xFF2D6A4F), fontSize = 16.sp, fontWeight = FontWeight.Black)
     }
 }
 

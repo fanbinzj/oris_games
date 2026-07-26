@@ -12,7 +12,7 @@ fun main() = application {
         title = "Dino Nugget Run",
         state = rememberWindowState(width = 1000.dp, height = 640.dp),
     ) {
-        val storage = remember { DesktopHighScoreStorage() }
+        val storage = remember { DesktopLeaderboardStorage() }
         App(storage)
     }
 }

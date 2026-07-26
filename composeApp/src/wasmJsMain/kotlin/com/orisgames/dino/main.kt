@@ -8,7 +8,7 @@ import kotlinx.browser.document
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
     ComposeViewport(document.body!!) {
-        val storage = remember { BrowserHighScoreStorage() }
+        val storage = remember { BrowserLeaderboardStorage() }
         App(storage)
     }
 }

@@ -25,11 +25,6 @@ import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.sin
 
-private val SkyTop = Color(0xFF9ADCF0)
-private val SkyBottom = Color(0xFFD8F3FA)
-private val GrassColor = Color(0xFF7CB342)
-private val DirtColor = Color(0xFFC8975F)
-private val DirtSpeckle = Color(0xFFB07F4A)
 private val CactusColor = Color(0xFF3E9B4F)
 private val DinoColor = Color(0xFF38A169)
 private val DinoDark = Color(0xFF2F7A3D)
@@ -37,21 +32,35 @@ private val DinoBelly = Color(0xFFA8E6C3)
 private val NuggetColor = Color(0xFFE9A13B)
 private val NuggetLight = Color(0xFFF6C36B)
 private val WingColor = Color(0xFFFFF6E0)
-private val CloudColor = Color(0xE6FFFFFF)
-private val SunColor = Color(0xFFFFE08A)
-private val SunHalo = Color(0x55FFE08A)
 private val StarColor = Color(0xFFFFC93C)
 private val PopColor = Color(0xFF7A4E00)
 private val EyeDark = Color(0xFF1F2933)
+private val RainColor = Color(0xB3CFE8FF)
+private val SnowColor = Color(0xE6FFFFFF)
+private val MoonColor = Color(0xFFF4F1DE)
+private val NightStarColor = Color(0xFFFFF8D6)
 
 /**
  * Draws the whole game in world coordinates (800x450, y down). The world is
  * scaled to fit the canvas and anchored to the canvas bottom: tall (portrait)
  * screens get extra sky above the action, and screens wider than 16:9 get
  * centered pillarboxes instead of cropping the top of the jump arc.
+ *
+ * The scene theme follows the challenge level and crossfades during the
+ * level-up celebration.
  */
 fun DrawScope.drawGame(engine: GameEngine, textMeasurer: TextMeasurer) {
-    drawRect(brush = Brush.verticalGradient(listOf(SkyTop, SkyBottom)))
+    val current = SceneThemes.forLevel(engine.level)
+    val previous = SceneThemes.forLevel(engine.level - 1)
+    // While the level-up celebration runs, fade from the previous scene in.
+    val fadeIn = if (engine.milestone > 0 && engine.celebrationTimer > 0f) {
+        1f - engine.celebrationTimer / GameConfig.CELEBRATION_SECONDS
+    } else {
+        1f
+    }
+    val theme = SceneThemes.blend(previous, current, fadeIn)
+
+    drawRect(brush = Brush.verticalGradient(listOf(theme.skyTop, theme.skyBottom)))
 
     val scale = min(size.width / GameConfig.WORLD_WIDTH, size.height / GameConfig.WORLD_HEIGHT)
     val offsetX = (size.width - GameConfig.WORLD_WIDTH * scale) / 2f
@@ -60,19 +69,21 @@ fun DrawScope.drawGame(engine: GameEngine, textMeasurer: TextMeasurer) {
     // Full-width ground strip so pillarboxed sides blend in instead of
     // showing sky at ground level.
     val groundTopPx = offsetY + GameConfig.GROUND_Y * scale
-    drawRect(DirtColor, topLeft = Offset(0f, groundTopPx), size = Size(size.width, size.height - groundTopPx))
-    drawRect(GrassColor, topLeft = Offset(0f, groundTopPx), size = Size(size.width, 9f * scale))
+    drawRect(theme.dirt, topLeft = Offset(0f, groundTopPx), size = Size(size.width, size.height - groundTopPx))
+    drawRect(theme.grass, topLeft = Offset(0f, groundTopPx), size = Size(size.width, 9f * scale))
 
     withTransform({
         translate(offsetX, offsetY)
         scale(scale, scale, pivot = Offset.Zero)
     }) {
-        drawSun()
-        drawClouds(engine.distance)
-        drawGround(engine.distance)
+        drawCelestialBodies(previous, current, fadeIn, engine.elapsed)
+        drawClouds(engine.distance, theme.cloud)
+        drawGround(engine.distance, theme)
         engine.cacti.forEach { drawCactus(it) }
         engine.nuggets.forEach { drawNugget(it, engine.elapsed) }
         drawDino(engine)
+        drawWeather(previous.weather, 1f - fadeIn, engine.elapsed)
+        drawWeather(current.weather, fadeIn, engine.elapsed)
         if (engine.celebrationTimer > 0f) {
             drawCelebrationStars(engine)
         }
@@ -80,40 +91,117 @@ fun DrawScope.drawGame(engine: GameEngine, textMeasurer: TextMeasurer) {
     }
 }
 
-private fun DrawScope.drawSun() {
-    drawCircle(SunHalo, radius = 52f, center = Offset(715f, 62f))
-    drawCircle(SunColor, radius = 38f, center = Offset(715f, 62f))
+/** Sun, moon, and night stars, cross-faded between the two active scenes. */
+private fun DrawScope.drawCelestialBodies(
+    previous: SceneTheme,
+    current: SceneTheme,
+    fadeIn: Float,
+    elapsed: Float,
+) {
+    previous.sunColor?.let { drawSun(it, alpha = 1f - fadeIn) }
+    current.sunColor?.let { drawSun(it, alpha = fadeIn) }
+    if (previous.night) drawNightSky(alpha = 1f - fadeIn, elapsed = elapsed)
+    if (current.night) drawNightSky(alpha = fadeIn, elapsed = elapsed)
 }
 
-private fun DrawScope.drawClouds(distance: Float) {
+private fun DrawScope.drawSun(color: Color, alpha: Float) {
+    if (alpha <= 0f) return
+    drawCircle(color.copy(alpha = 0.33f * alpha), radius = 52f, center = Offset(715f, 62f))
+    drawCircle(color.copy(alpha = color.alpha * alpha), radius = 38f, center = Offset(715f, 62f))
+}
+
+private fun DrawScope.drawNightSky(alpha: Float, elapsed: Float) {
+    if (alpha <= 0f) return
+    // Crescent moon: bright disc with a sky-side bite taken out.
+    drawCircle(MoonColor.copy(alpha = alpha), radius = 30f, center = Offset(700f, 70f))
+    drawCircle(SceneThemes.NIGHT.skyTop.copy(alpha = alpha), radius = 26f, center = Offset(712f, 62f))
+    for (i in 0 until 24) {
+        val x = (i * 179.3f).mod(GameConfig.WORLD_WIDTH)
+        val y = 12f + (i * 83.7f).mod(170f)
+        val twinkle = 0.5f + 0.5f * sin(elapsed * 2.1f + i * 1.7f)
+        drawCircle(
+            NightStarColor.copy(alpha = alpha * (0.35f + 0.55f * twinkle)),
+            radius = 1.4f + (i % 3) * 0.7f,
+            center = Offset(x, y),
+        )
+    }
+}
+
+private fun DrawScope.drawWeather(weather: Weather, alpha: Float, elapsed: Float) {
+    if (alpha <= 0f) return
+    when (weather) {
+        Weather.Clear -> Unit
+        Weather.Rain -> {
+            for (i in 0 until 46) {
+                val y = (i * 211.3f + elapsed * 720f).mod(GameConfig.GROUND_Y + 30f) - 15f
+                val x = (i * 97.7f - elapsed * 120f).mod(GameConfig.WORLD_WIDTH + 60f) - 30f
+                drawLine(
+                    RainColor.copy(alpha = RainColor.alpha * alpha),
+                    start = Offset(x, y),
+                    end = Offset(x - 4f, y + 15f),
+                    strokeWidth = 2f,
+                )
+            }
+            // Deterministic double lightning flash every few seconds.
+            val cycle = elapsed.mod(6.7f)
+            val flash = when {
+                cycle < 0.12f -> 0.32f
+                cycle in 0.22f..0.34f -> 0.2f
+                else -> 0f
+            }
+            if (flash > 0f) {
+                drawRect(
+                    Color.White.copy(alpha = flash * alpha),
+                    topLeft = Offset(-2f, -2f),
+                    size = Size(GameConfig.WORLD_WIDTH + 4f, GameConfig.WORLD_HEIGHT + 4f),
+                )
+            }
+        }
+        Weather.Snow -> {
+            for (i in 0 until 36) {
+                val fall = 55f + (i % 5) * 13f
+                val y = (i * 173.3f + elapsed * fall).mod(GameConfig.GROUND_Y + 24f) - 12f
+                val x = (i * 127.1f + sin(elapsed * 1.3f + i) * 18f - elapsed * 25f)
+                    .mod(GameConfig.WORLD_WIDTH + 40f) - 20f
+                drawCircle(
+                    SnowColor.copy(alpha = SnowColor.alpha * alpha),
+                    radius = 1.8f + (i % 3),
+                    center = Offset(x, y),
+                )
+            }
+        }
+    }
+}
+
+private fun DrawScope.drawClouds(distance: Float, color: Color) {
     val span = GameConfig.WORLD_WIDTH + 260f
     for (i in 0 until 4) {
         val x = (GameConfig.WORLD_WIDTH + 130f) - ((distance * 0.25f + i * 335f) % span)
         val y = 52f + (i % 3) * 42f
-        drawCloud(x, y)
+        drawCloud(x, y, color)
     }
 }
 
-private fun DrawScope.drawCloud(x: Float, y: Float) {
+private fun DrawScope.drawCloud(x: Float, y: Float, color: Color) {
     drawRoundRect(
-        CloudColor,
+        color,
         topLeft = Offset(x - 34f, y + 2f),
         size = Size(72f, 18f),
         cornerRadius = CornerRadius(9f),
     )
-    drawCircle(CloudColor, 18f, Offset(x - 16f, y + 2f))
-    drawCircle(CloudColor, 24f, Offset(x + 4f, y - 2f))
-    drawCircle(CloudColor, 15f, Offset(x + 24f, y + 3f))
+    drawCircle(color, 18f, Offset(x - 16f, y + 2f))
+    drawCircle(color, 24f, Offset(x + 4f, y - 2f))
+    drawCircle(color, 15f, Offset(x + 24f, y + 3f))
 }
 
-private fun DrawScope.drawGround(distance: Float) {
+private fun DrawScope.drawGround(distance: Float, theme: SceneTheme) {
     drawRect(
-        DirtColor,
+        theme.dirt,
         topLeft = Offset(-2f, GameConfig.GROUND_Y),
         size = Size(GameConfig.WORLD_WIDTH + 4f, GameConfig.WORLD_HEIGHT - GameConfig.GROUND_Y),
     )
     drawRect(
-        GrassColor,
+        theme.grass,
         topLeft = Offset(-2f, GameConfig.GROUND_Y),
         size = Size(GameConfig.WORLD_WIDTH + 4f, 9f),
     )
@@ -127,7 +215,7 @@ private fun DrawScope.drawGround(distance: Float) {
         if (x < -20f || x > GameConfig.WORLD_WIDTH + 20f) continue
         val row = ((idx % 3) + 3) % 3
         drawRoundRect(
-            DirtSpeckle,
+            theme.speckle,
             topLeft = Offset(x, GameConfig.GROUND_Y + 24f + row * 14f),
             size = Size(14f, 4f),
             cornerRadius = CornerRadius(2f),
@@ -149,7 +237,6 @@ private fun DrawScope.drawCactus(cactus: Cactus) {
     )
     if (cactus.height >= 54f) {
         val armY = top + cactus.height * 0.32f
-        // Left arm: vertical tip plus a bridge to the body.
         drawRoundRect(
             CactusColor,
             topLeft = Offset(cactus.x, armY + 10f),
@@ -162,7 +249,6 @@ private fun DrawScope.drawCactus(cactus: Cactus) {
             size = Size(arm, 27f),
             cornerRadius = CornerRadius(3.5f),
         )
-        // Right arm, slightly lower.
         val rightEdge = bodyLeft + bodyWidth - 2f
         drawRoundRect(
             CactusColor,

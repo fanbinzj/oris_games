@@ -13,8 +13,13 @@ The dino runs forward automatically. Tap (or press Space / Arrow Up) to jump.
 
 - Jump over cacti to survive — landing on one ends the run.
 - Chicken nuggets with wings fly by at jump height; eat them for bonus points.
-- Every 100 points is a milestone celebration.
-- When you die, your score is compared with your saved best score.
+- Every 100 points levels you up (visible as LEVEL in the HUD); the game
+  gets gradually faster with your score, capping around level 10.
+- A score that makes the Top 10 asks for your name — leave it empty and you
+  get a random one ("Speedy Rex", "Lucky Nugget", ...).
+- The TOP 10 screen shows the global leaderboard when the backend is
+  configured (see `backend/README.md`), otherwise this device's list.
+  Offline, everything still works with the local list.
 
 ## Requirements
 

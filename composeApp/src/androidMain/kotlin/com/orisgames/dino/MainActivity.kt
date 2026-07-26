@@ -11,7 +11,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            val storage = remember { AndroidHighScoreStorage(applicationContext) }
+            val storage = remember { AndroidLeaderboardStorage(applicationContext) }
             App(storage)
         }
     }

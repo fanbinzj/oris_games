@@ -1,6 +1,8 @@
 package com.orisgames.dino.game
 
-import com.orisgames.dino.storage.HighScoreStorage
+import com.orisgames.dino.storage.LeaderboardCodec
+import com.orisgames.dino.storage.LeaderboardStorage
+import com.orisgames.dino.storage.ScoreEntry
 import kotlin.math.min
 import kotlin.random.Random
 import kotlin.test.Test
@@ -10,19 +12,20 @@ import kotlin.test.assertTrue
 
 private const val DT = 1f / 60f
 
-private class FakeStorage(var best: Int = 0) : HighScoreStorage {
+private class FakeStorage(initial: List<ScoreEntry> = emptyList()) : LeaderboardStorage {
+    var entries: List<ScoreEntry> = initial
     var saveCount = 0
 
-    override fun load(): Int = best
+    override fun load(): List<ScoreEntry> = entries
 
-    override fun save(score: Int) {
-        best = score
+    override fun save(entries: List<ScoreEntry>) {
+        this.entries = entries
         saveCount++
     }
 }
 
 private fun newEngine(best: Int = 0, seed: Int = 1): Pair<GameEngine, FakeStorage> {
-    val storage = FakeStorage(best)
+    val storage = FakeStorage(if (best > 0) listOf(ScoreEntry("Seed", best)) else emptyList())
     return GameEngine(storage, Random(seed)) to storage
 }
 
@@ -131,7 +134,7 @@ class GameEngineTest {
     }
 
     @Test
-    fun hittingCactusEndsGameAndSavesNewBest() {
+    fun hittingCactusAsksForNameThenSavesNewBest() {
         val (engine, storage) = newEngine()
         engine.start()
         engine.debugDisableSpawning()
@@ -140,9 +143,16 @@ class GameEngineTest {
         engine.update(DT)
         assertEquals(GamePhase.GameOver, engine.phase)
         assertTrue(engine.isNewRecord)
+        assertTrue(engine.awaitingRecordName)
+        assertEquals(0, storage.saveCount, "nothing persists before a name is given")
+
+        val name = engine.submitRecordName("Momo")
+        assertEquals("Momo", name)
+        assertFalse(engine.awaitingRecordName)
         assertEquals(30, engine.bestScore)
-        assertEquals(30, storage.best)
+        assertEquals(listOf(ScoreEntry("Momo", 30)), storage.entries)
         assertEquals(1, storage.saveCount)
+        assertEquals(0, engine.lastRecordRank)
     }
 
     @Test
@@ -156,7 +166,12 @@ class GameEngineTest {
         assertEquals(GamePhase.GameOver, engine.phase)
         assertFalse(engine.isNewRecord)
         assertEquals(100, engine.bestScore)
-        assertEquals(0, storage.saveCount)
+        // 10 points still makes the (non-full) local top list.
+        assertTrue(engine.awaitingRecordName)
+        engine.submitRecordName("Kid")
+        assertEquals(100, engine.bestScore)
+        assertEquals(1, engine.lastRecordRank)
+        assertEquals(listOf(ScoreEntry("Seed", 100), ScoreEntry("Kid", 10)), storage.entries)
     }
 
     @Test
@@ -244,6 +259,7 @@ class GameEngineTest {
         engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
         engine.update(DT)
         assertEquals(GamePhase.GameOver, engine.phase)
+        engine.submitRecordName("Momo")
 
         engine.tap()
         assertEquals(GamePhase.GameOver, engine.phase, "restart must be locked right after death")
@@ -254,6 +270,25 @@ class GameEngineTest {
         assertEquals(0, engine.score)
         assertTrue(engine.cacti.isEmpty())
         assertEquals(30, engine.bestScore)
+    }
+
+    @Test
+    fun restartStaysBlockedWhileAwaitingName() {
+        val (engine, _) = newEngine()
+        engine.start()
+        engine.debugDisableSpawning()
+        engine.addScore(30)
+        engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
+        engine.update(DT)
+        assertTrue(engine.awaitingRecordName)
+
+        engine.step(GameConfig.RESTART_LOCK_SECONDS + 0.5f)
+        engine.tap()
+        assertEquals(GamePhase.GameOver, engine.phase, "no restart while the name dialog is open")
+
+        engine.submitRecordName("")
+        engine.tap()
+        assertEquals(GamePhase.Running, engine.phase)
     }
 
     @Test
@@ -421,8 +456,10 @@ class GameEngineTest {
         engine.debugDisableSpawning()
         engine.addScore(95)
         assertEquals(0, engine.milestone)
+        assertEquals(1, engine.level, "game starts at level 1")
         engine.addScore(25) // 120: crosses 100 without hitting it exactly
         assertEquals(1, engine.milestone)
+        assertEquals(2, engine.level, "level-up at every milestone")
         assertTrue(engine.celebrationTimer > 0f)
         engine.step(2f)
         assertEquals(0f, engine.celebrationTimer)
@@ -460,25 +497,111 @@ class GameEngineTest {
     }
 
     @Test
-    fun savesExactlyOncePerGameOverAndTieDoesNotSave() {
+    fun savesExactlyOncePerGameOverAndTieRanksBelowExisting() {
         val (engine, storage) = newEngine()
         engine.start()
         engine.debugDisableSpawning()
         engine.addScore(30)
         engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
         engine.update(DT)
+        engine.submitRecordName("A")
+        engine.submitRecordName("B") // second submit must be a no-op
         engine.step(1f) // extra game-over frames must not save again
         assertEquals(1, storage.saveCount)
+        assertEquals("A", engine.lastRecordName)
 
-        val (tieEngine, tieStorage) = newEngine(best = 30)
+        val (tieEngine, _) = newEngine(best = 30)
         tieEngine.start()
         tieEngine.debugDisableSpawning()
         tieEngine.addScore(30)
         tieEngine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
         tieEngine.update(DT)
         assertFalse(tieEngine.isNewRecord, "a tie is not a new record")
-        assertEquals(0, tieStorage.saveCount)
+        tieEngine.submitRecordName("Tie")
+        assertEquals(1, tieEngine.lastRecordRank, "a tie ranks below the earlier record")
         assertEquals(30, tieEngine.bestScore)
+    }
+
+    @Test
+    fun blankNameGetsRandomKidFriendlyName() {
+        val (engine, storage) = newEngine(seed = 9)
+        engine.start()
+        engine.debugDisableSpawning()
+        engine.addScore(40)
+        engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
+        engine.update(DT)
+        val name = engine.submitRecordName("   ")
+        assertTrue(name.isNotBlank())
+        assertTrue(name.contains(' '), "random names are 'Adjective Creature': $name")
+        assertEquals(name, storage.entries.single().name)
+    }
+
+    @Test
+    fun submittedNameIsSanitizedAndTruncated() {
+        val (engine, storage) = newEngine()
+        engine.start()
+        engine.debugDisableSpawning()
+        engine.addScore(40)
+        engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
+        engine.update(DT)
+        val name = engine.submitRecordName("A|B\nCDEFGHIJKLMNOP")
+        assertFalse(name.contains('|'))
+        assertFalse(name.contains('\n'))
+        assertTrue(name.length <= GameConfig.MAX_NAME_LENGTH)
+        assertEquals(name, storage.entries.single().name)
+    }
+
+    @Test
+    fun lowScoreOnFullBoardDoesNotQualify() {
+        val seeded = (1..GameConfig.LEADERBOARD_SIZE).map { ScoreEntry("P$it", 100 * it) }
+        val storage = FakeStorage(seeded)
+        val engine = GameEngine(storage, Random(1))
+        engine.start()
+        engine.debugDisableSpawning()
+        engine.addScore(50) // below the lowest seeded score (100)
+        engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
+        engine.update(DT)
+        assertEquals(GamePhase.GameOver, engine.phase)
+        assertFalse(engine.awaitingRecordName, "score below a full board must not prompt")
+        assertEquals(0, storage.saveCount)
+
+        engine.step(GameConfig.RESTART_LOCK_SECONDS + 0.1f)
+        engine.tap()
+        assertEquals(GamePhase.Running, engine.phase)
+    }
+
+    @Test
+    fun leaderboardCapsAtConfiguredSizeAndDropsLowest() {
+        val seeded = (1..GameConfig.LEADERBOARD_SIZE).map { ScoreEntry("P$it", 100 * it) }
+        val storage = FakeStorage(seeded)
+        val engine = GameEngine(storage, Random(1))
+        engine.start()
+        engine.debugDisableSpawning()
+        engine.addScore(150) // beats the lowest (100), not the highest
+        engine.debugAddCactus(Cactus(x = GameConfig.DINO_X, width = 40f, height = 50f))
+        engine.update(DT)
+        assertTrue(engine.awaitingRecordName)
+        engine.submitRecordName("Newbie")
+        assertEquals(GameConfig.LEADERBOARD_SIZE, storage.entries.size)
+        assertTrue(storage.entries.any { it.name == "Newbie" })
+        assertFalse(storage.entries.any { it.score == 100 }, "lowest entry must drop off")
+    }
+
+    @Test
+    fun codecRoundTripsAndSkipsMalformedLines() {
+        val entries = listOf(
+            ScoreEntry("Speedy Rex", 420),
+            ScoreEntry("A B", 10),
+        )
+        assertEquals(entries, LeaderboardCodec.decode(LeaderboardCodec.encode(entries)))
+
+        val messy = "Speedy Rex|420\ngarbage line\n|55\nName|notanumber\nOk|7\n\n"
+        assertEquals(
+            listOf(ScoreEntry("Speedy Rex", 420), ScoreEntry("Ok", 7)),
+            LeaderboardCodec.decode(messy),
+        )
+        assertEquals(emptyList(), LeaderboardCodec.decode(null))
+        assertEquals(emptyList(), LeaderboardCodec.decode(""))
     }
 
     @Test

@@ -1,6 +1,9 @@
 package com.orisgames.dino.game
 
-import com.orisgames.dino.storage.HighScoreStorage
+import com.orisgames.dino.storage.Leaderboard
+import com.orisgames.dino.storage.LeaderboardCodec
+import com.orisgames.dino.storage.LeaderboardStorage
+import com.orisgames.dino.storage.RandomNames
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -10,21 +13,35 @@ import kotlin.random.Random
  * coordinates are world units (800x450, y grows downward), time is seconds.
  */
 class GameEngine(
-    private val storage: HighScoreStorage,
+    storage: LeaderboardStorage,
     private val random: Random = Random.Default,
 ) {
+    val leaderboard = Leaderboard(storage)
+
     var phase: GamePhase = GamePhase.Ready
         private set
     var score: Int = 0
         private set
-    var bestScore: Int = storage.load()
+    var bestScore: Int = leaderboard.best
         private set
     var isNewRecord: Boolean = false
+        private set
+
+    /** True after a qualifying run ends, until the player submits a name. */
+    var awaitingRecordName: Boolean = false
+        private set
+    var lastRecordName: String? = null
+        private set
+    var lastRecordRank: Int = -1
         private set
     var milestone: Int = 0
         private set
     var celebrationTimer: Float = 0f
         private set
+
+    /** Displayed challenge level: level-up at every milestone (100 points). */
+    val level: Int
+        get() = milestone + 1
 
     /** Y of the dino's feet. Equals GROUND_Y when standing. */
     var dinoBottomY: Float = GameConfig.GROUND_Y
@@ -61,7 +78,7 @@ class GameEngine(
             GamePhase.Ready -> start()
             GamePhase.Running -> jump()
             GamePhase.GameOver ->
-                if (timeSinceGameOver >= GameConfig.RESTART_LOCK_SECONDS) start()
+                if (!awaitingRecordName && timeSinceGameOver >= GameConfig.RESTART_LOCK_SECONDS) start()
         }
     }
 
@@ -73,6 +90,9 @@ class GameEngine(
         milestone = 0
         celebrationTimer = 0f
         isNewRecord = false
+        awaitingRecordName = false
+        lastRecordName = null
+        lastRecordRank = -1
         dinoBottomY = GameConfig.GROUND_Y
         dinoVelocityY = 0f
         speed = GameConfig.BASE_SPEED
@@ -278,10 +298,23 @@ class GameEngine(
         phase = GamePhase.GameOver
         timeSinceGameOver = 0f
         isNewRecord = score > bestScore
-        if (isNewRecord) {
-            bestScore = score
-            storage.save(score)
-        }
+        // Nothing is persisted yet: a qualifying run first asks the player
+        // for a name (submitRecordName), then lands on the leaderboard.
+        awaitingRecordName = leaderboard.qualifies(score)
+    }
+
+    /**
+     * Records the finished run under the given name (a random kid-friendly
+     * name if blank) and returns the name actually used.
+     */
+    fun submitRecordName(rawName: String): String {
+        if (!awaitingRecordName) return lastRecordName ?: ""
+        val name = LeaderboardCodec.sanitizeName(rawName).ifBlank { RandomNames.next(random) }
+        lastRecordName = name
+        lastRecordRank = leaderboard.add(name, score)
+        bestScore = leaderboard.best
+        awaitingRecordName = false
+        return name
     }
 
     private fun randomBetween(from: Float, until: Float): Float =
