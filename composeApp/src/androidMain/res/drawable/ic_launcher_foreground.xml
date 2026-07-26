@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple dino head-and-body mark, kept inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- tail -->
+    <path
+        android:fillColor="#38A169"
+        android:pathData="M40,56 L28,49 L40,66 Z" />
+    <!-- body -->
+    <path
+        android:fillColor="#38A169"
+        android:pathData="M38,50 h22 a8,8 0 0 1 8,8 v10 a8,8 0 0 1 -8,8 h-22 a8,8 0 0 1 -8,-8 v-10 a8,8 0 0 1 8,-8 Z" />
+    <!-- belly -->
+    <path
+        android:fillColor="#A8E6C3"
+        android:pathData="M43,62 a8,6 0 1 0 16,0 a8,6 0 1 0 -16,0 Z" />
+    <!-- head -->
+    <path
+        android:fillColor="#38A169"
+        android:pathData="M52,34 h18 a7,7 0 0 1 7,7 v8 a7,7 0 0 1 -7,7 h-18 a7,7 0 0 1 -7,-7 v-8 a7,7 0 0 1 7,-7 Z" />
+    <!-- eye -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64,41 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 Z" />
+    <path
+        android:fillColor="#1F2933"
+        android:pathData="M67,41 a2,2 0 1 0 4,0 a2,2 0 1 0 -4,0 Z" />
+    <!-- legs -->
+    <path
+        android:fillColor="#38A169"
+        android:pathData="M40,74 h6 v6 a3,3 0 0 1 -6,0 Z" />
+    <path
+        android:fillColor="#38A169"
+        android:pathData="M52,74 h6 v6 a3,3 0 0 1 -6,0 Z" />
+</vector>
