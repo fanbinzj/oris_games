@@ -61,8 +61,8 @@ object GameConfig {
     const val LEADERBOARD_SIZE = 10
     const val MAX_NAME_LENGTH = 12
 
-    // Base URL of the global leaderboard worker (no trailing slash), e.g.
-    // "https://dino-leaderboard.<account>.workers.dev". Empty = global
-    // leaderboard disabled; the game falls back to the local top list.
-    const val GLOBAL_LEADERBOARD_URL = ""
+    // Base URL of the global leaderboard worker (no trailing slash).
+    // Empty = global leaderboard disabled; the game falls back to the
+    // local top list.
+    const val GLOBAL_LEADERBOARD_URL = "https://dino-leaderboard.oris-games.workers.dev"
 }
