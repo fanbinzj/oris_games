@@ -148,11 +148,13 @@ class GameEngine(
             endGame()
             return
         }
-        speed = min(
-            GameConfig.MAX_SPEED,
-            GameConfig.BASE_SPEED + score * GameConfig.SPEED_PER_POINT,
-        )
+        speed = speedForLevel(level)
     }
+
+    internal fun speedForLevel(level: Int): Float = min(
+        GameConfig.MAX_SPEED,
+        GameConfig.BASE_SPEED + (level - 1) * GameConfig.SPEED_STEP_PER_LEVEL,
+    )
 
     private fun moveWorld(step: Float) {
         mutableCacti.forEach { it.x -= step }
@@ -201,21 +203,40 @@ class GameEngine(
 
     internal fun spawnCactus() {
         val width = randomBetween(GameConfig.CACTUS_MIN_WIDTH, GameConfig.CACTUS_MAX_WIDTH)
-        val height = randomBetween(GameConfig.CACTUS_MIN_HEIGHT, GameConfig.CACTUS_MAX_HEIGHT)
+        val height = randomBetween(GameConfig.CACTUS_MIN_HEIGHT, maxCactusHeightForLevel(level))
         mutableCacti.add(Cactus(x = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN, width = width, height = height))
     }
+
+    internal fun maxCactusHeightForLevel(level: Int): Float = min(
+        GameConfig.CACTUS_MAX_HEIGHT_CAP,
+        GameConfig.CACTUS_MAX_HEIGHT + (level - 1) * GameConfig.CACTUS_HEIGHT_STEP_PER_LEVEL,
+    )
 
     internal fun spawnNugget() {
         val altitude = randomBetween(GameConfig.NUGGET_MIN_ALTITUDE, GameConfig.NUGGET_MAX_ALTITUDE)
         mutableNuggets.add(Nugget(x = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN, y = GameConfig.GROUND_Y - altitude))
     }
 
+    internal fun minCactusGapSecondsForLevel(level: Int): Float = max(
+        GameConfig.MIN_CACTUS_GAP_FLOOR,
+        GameConfig.MIN_CACTUS_GAP_SECONDS - (level - 1) * GameConfig.CACTUS_GAP_MIN_STEP_PER_LEVEL,
+    )
+
+    internal fun maxCactusGapSecondsForLevel(level: Int): Float = max(
+        GameConfig.MAX_CACTUS_GAP_FLOOR,
+        GameConfig.MAX_CACTUS_GAP_SECONDS - (level - 1) * GameConfig.CACTUS_GAP_MAX_STEP_PER_LEVEL,
+    )
+
     internal fun nextCactusGapDistance(): Float {
-        // Convert seconds to distance at an inflated speed: if the game
-        // accelerates while this gap is in flight, the actual travel time
-        // still stays at or above MIN_CACTUS_GAP_SECONDS.
+        // Gaps tighten with level but never drop below the floors. Convert
+        // seconds to distance at an inflated speed: if the game accelerates
+        // while this gap is in flight, the actual travel time still stays
+        // at or above the per-level minimum.
         val projectedSpeed = min(GameConfig.MAX_SPEED, speed * GameConfig.GAP_SPEED_HEADROOM)
-        return randomBetween(GameConfig.MIN_CACTUS_GAP_SECONDS, GameConfig.MAX_CACTUS_GAP_SECONDS) * projectedSpeed
+        return randomBetween(
+            minCactusGapSecondsForLevel(level),
+            maxCactusGapSecondsForLevel(level),
+        ) * projectedSpeed
     }
 
     internal fun nextNuggetGapDistance(): Float =

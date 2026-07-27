@@ -27,10 +27,15 @@ class InMemoryLeaderboardStorage : LeaderboardStorage {
  * break the format.
  */
 object LeaderboardCodec {
+    // Must match the worker's sanitize rules (backend/leaderboard-worker.js):
+    // strip | \r \n < > so a name is stored identically on both sides, or the
+    // sync dedupe (exact name+score match) would re-upload it every launch.
     fun sanitizeName(raw: String): String = raw
         .replace('|', ' ')
         .replace('\n', ' ')
         .replace('\r', ' ')
+        .replace('<', ' ')
+        .replace('>', ' ')
         .trim()
         .take(GameConfig.MAX_NAME_LENGTH)
 

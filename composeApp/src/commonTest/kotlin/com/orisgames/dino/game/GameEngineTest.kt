@@ -237,17 +237,36 @@ class GameEngineTest {
     }
 
     @Test
-    fun speedIncreasesWithScoreAndCaps() {
+    fun speedSteppedByLevelAndCaps() {
         val (engine, _) = newEngine()
         engine.start()
         engine.debugDisableSpawning()
         assertEquals(GameConfig.BASE_SPEED, engine.speed)
-        engine.addScore(50)
+        // Level 1 -> 2: one full speed step.
+        engine.addScore(GameConfig.MILESTONE_STEP)
         engine.update(DT)
-        assertEquals(GameConfig.BASE_SPEED + 50 * GameConfig.SPEED_PER_POINT, engine.speed)
-        engine.addScore(1000)
+        assertEquals(GameConfig.BASE_SPEED + GameConfig.SPEED_STEP_PER_LEVEL, engine.speed)
+        // Same level: no further speed change until the next milestone.
+        engine.addScore(GameConfig.MILESTONE_STEP / 2)
+        engine.update(DT)
+        assertEquals(GameConfig.BASE_SPEED + GameConfig.SPEED_STEP_PER_LEVEL, engine.speed)
+        // Many levels -> capped.
+        engine.addScore(10000)
         engine.update(DT)
         assertEquals(GameConfig.MAX_SPEED, engine.speed)
+    }
+
+    @Test
+    fun difficultyRampsWithLevel() {
+        val (engine, _) = newEngine()
+        // Higher levels: faster, tighter gaps, taller cacti — each a real step.
+        assertTrue(engine.speedForLevel(3) > engine.speedForLevel(1))
+        assertTrue(engine.minCactusGapSecondsForLevel(5) < engine.minCactusGapSecondsForLevel(1))
+        assertTrue(engine.maxCactusHeightForLevel(5) > engine.maxCactusHeightForLevel(1))
+        // Floors and caps hold at extreme levels.
+        assertTrue(engine.minCactusGapSecondsForLevel(100) >= GameConfig.MIN_CACTUS_GAP_FLOOR)
+        assertTrue(engine.maxCactusHeightForLevel(100) <= GameConfig.CACTUS_MAX_HEIGHT_CAP)
+        assertEquals(GameConfig.MAX_SPEED, engine.speedForLevel(100))
     }
 
     @Test

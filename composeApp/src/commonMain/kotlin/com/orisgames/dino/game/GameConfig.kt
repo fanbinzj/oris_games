@@ -14,7 +14,15 @@ object GameConfig {
 
     const val BASE_SPEED = 280f
     const val MAX_SPEED = 620f
-    const val SPEED_PER_POINT = 0.35f
+    // Each level-up (every MILESTONE_STEP points) is a distinct, noticeable
+    // difficulty step: faster world, denser and taller cacti.
+    const val SPEED_STEP_PER_LEVEL = 45f
+    const val CACTUS_GAP_MIN_STEP_PER_LEVEL = 0.02f
+    const val CACTUS_GAP_MAX_STEP_PER_LEVEL = 0.08f
+    const val MIN_CACTUS_GAP_FLOOR = 0.95f
+    const val MAX_CACTUS_GAP_FLOOR = 1.35f
+    const val CACTUS_HEIGHT_STEP_PER_LEVEL = 4f
+    const val CACTUS_MAX_HEIGHT_CAP = 88f
 
     const val CACTUS_SCORE = 10
     const val NUGGET_SCORE = 25
@@ -60,6 +68,10 @@ object GameConfig {
 
     const val LEADERBOARD_SIZE = 10
     const val MAX_NAME_LENGTH = 12
+
+    // Must match MAX_SCORE in backend/leaderboard-worker.js: the worker
+    // rejects higher scores with 400, so we never try to upload them.
+    const val MAX_GLOBAL_SCORE = 50000
 
     // Base URL of the global leaderboard worker (no trailing slash).
     // Empty = global leaderboard disabled; the game falls back to the

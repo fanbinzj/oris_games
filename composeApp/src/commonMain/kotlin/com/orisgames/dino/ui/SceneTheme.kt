@@ -3,7 +3,7 @@ package com.orisgames.dino.ui
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 
-enum class Weather { Clear, Rain, Snow }
+enum class Weather { Clear, Rain, Storm, Snow }
 
 /** Colors and effects for one background scene. */
 data class SceneTheme(
@@ -13,12 +13,17 @@ data class SceneTheme(
     val dirt: Color,
     val speckle: Color,
     val cloud: Color,
-    val sunColor: Color?, // null = no sun disc (rain, night)
+    val sunColor: Color?, // null = no sun disc (overcast, rain, storm, night)
     val night: Boolean = false,
     val weather: Weather = Weather.Clear,
+    val extraClouds: Boolean = false, // denser cloud cover for overcast/storm skies
 )
 
-/** Scenes cycle with the challenge level: every level-up changes the world. */
+/**
+ * Scenes cycle with the challenge level: every level-up changes the world.
+ * Order roughly tracks a worsening sky as the game gets harder:
+ * day → cloudy → sunset → night → rain → storm → snow, then repeats.
+ */
 object SceneThemes {
     val DAY = SceneTheme(
         skyTop = Color(0xFF9ADCF0),
@@ -28,6 +33,16 @@ object SceneThemes {
         speckle = Color(0xFFB07F4A),
         cloud = Color(0xE6FFFFFF),
         sunColor = Color(0xFFFFE08A),
+    )
+    val CLOUDY = SceneTheme(
+        skyTop = Color(0xFFAEC2CE),
+        skyBottom = Color(0xFFDCE6EC),
+        grass = Color(0xFF74A83F),
+        dirt = Color(0xFFC0925C),
+        speckle = Color(0xFFA97C47),
+        cloud = Color(0xFFF2F5F7),
+        sunColor = null,
+        extraClouds = true,
     )
     val SUNSET = SceneTheme(
         skyTop = Color(0xFFFF9E7D),
@@ -54,9 +69,21 @@ object SceneThemes {
         grass = Color(0xFF5F8F3E),
         dirt = Color(0xFFA57F52),
         speckle = Color(0xFF8F6C42),
-        cloud = Color(0xFF77899A),
+        cloud = Color(0xFF8B9BAA),
         sunColor = null,
         weather = Weather.Rain,
+        extraClouds = true,
+    )
+    val STORM = SceneTheme(
+        skyTop = Color(0xFF2E3948),
+        skyBottom = Color(0xFF56636F),
+        grass = Color(0xFF4E7639),
+        dirt = Color(0xFF8A6845),
+        speckle = Color(0xFF6F5238),
+        cloud = Color(0xFF3F4B58),
+        sunColor = null,
+        weather = Weather.Storm,
+        extraClouds = true,
     )
     val SNOW = SceneTheme(
         skyTop = Color(0xFFBFD8E8),
@@ -67,9 +94,10 @@ object SceneThemes {
         cloud = Color(0xF0FFFFFF),
         sunColor = Color(0xFFF5F0C8),
         weather = Weather.Snow,
+        extraClouds = true,
     )
 
-    val ALL = listOf(DAY, SUNSET, NIGHT, RAIN, SNOW)
+    val ALL = listOf(DAY, CLOUDY, SUNSET, NIGHT, RAIN, STORM, SNOW)
 
     fun forLevel(level: Int): SceneTheme {
         val index = ((level - 1) % ALL.size + ALL.size) % ALL.size

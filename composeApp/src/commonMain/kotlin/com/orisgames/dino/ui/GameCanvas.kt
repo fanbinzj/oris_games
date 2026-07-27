@@ -39,6 +39,7 @@ private val RainColor = Color(0xB3CFE8FF)
 private val SnowColor = Color(0xE6FFFFFF)
 private val MoonColor = Color(0xFFF4F1DE)
 private val NightStarColor = Color(0xFFFFF8D6)
+private val LightningColor = Color(0xFFFFF3B0)
 
 /**
  * Draws the whole game in world coordinates (800x450, y down). The world is
@@ -77,7 +78,7 @@ fun DrawScope.drawGame(engine: GameEngine, textMeasurer: TextMeasurer) {
         scale(scale, scale, pivot = Offset.Zero)
     }) {
         drawCelestialBodies(previous, current, fadeIn, engine.elapsed)
-        drawClouds(engine.distance, theme.cloud)
+        drawClouds(engine.distance, theme.cloud, extra = current.extraClouds || previous.extraClouds)
         drawGround(engine.distance, theme)
         engine.cacti.forEach { drawCactus(it) }
         engine.nuggets.forEach { drawNugget(it, engine.elapsed) }
@@ -131,22 +132,14 @@ private fun DrawScope.drawWeather(weather: Weather, alpha: Float, elapsed: Float
     if (alpha <= 0f) return
     when (weather) {
         Weather.Clear -> Unit
-        Weather.Rain -> {
-            for (i in 0 until 46) {
-                val y = (i * 211.3f + elapsed * 720f).mod(GameConfig.GROUND_Y + 30f) - 15f
-                val x = (i * 97.7f - elapsed * 120f).mod(GameConfig.WORLD_WIDTH + 60f) - 30f
-                drawLine(
-                    RainColor.copy(alpha = RainColor.alpha * alpha),
-                    start = Offset(x, y),
-                    end = Offset(x - 4f, y + 15f),
-                    strokeWidth = 2f,
-                )
-            }
-            // Deterministic double lightning flash every few seconds.
-            val cycle = elapsed.mod(6.7f)
+        Weather.Rain -> drawRain(alpha, elapsed, drops = 46, speed = 720f, thickness = 2f)
+        Weather.Storm -> {
+            // Heavier, faster rain plus a slanted downpour tint and lightning.
+            drawRain(alpha, elapsed, drops = 80, speed = 1050f, thickness = 2.6f)
+            val cycle = elapsed.mod(5.3f)
             val flash = when {
-                cycle < 0.12f -> 0.32f
-                cycle in 0.22f..0.34f -> 0.2f
+                cycle < 0.10f -> 0.5f
+                cycle in 0.18f..0.30f -> 0.32f
                 else -> 0f
             }
             if (flash > 0f) {
@@ -155,6 +148,7 @@ private fun DrawScope.drawWeather(weather: Weather, alpha: Float, elapsed: Float
                     topLeft = Offset(-2f, -2f),
                     size = Size(GameConfig.WORLD_WIDTH + 4f, GameConfig.WORLD_HEIGHT + 4f),
                 )
+                drawLightningBolt(alpha, elapsed)
             }
         }
         Weather.Snow -> {
@@ -173,11 +167,42 @@ private fun DrawScope.drawWeather(weather: Weather, alpha: Float, elapsed: Float
     }
 }
 
-private fun DrawScope.drawClouds(distance: Float, color: Color) {
+private fun DrawScope.drawRain(alpha: Float, elapsed: Float, drops: Int, speed: Float, thickness: Float) {
+    for (i in 0 until drops) {
+        val y = (i * 211.3f + elapsed * speed).mod(GameConfig.GROUND_Y + 30f) - 15f
+        val x = (i * 97.7f - elapsed * 120f).mod(GameConfig.WORLD_WIDTH + 60f) - 30f
+        drawLine(
+            RainColor.copy(alpha = RainColor.alpha * alpha),
+            start = Offset(x, y),
+            end = Offset(x - 4f, y + 15f),
+            strokeWidth = thickness,
+        )
+    }
+}
+
+private fun DrawScope.drawLightningBolt(alpha: Float, elapsed: Float) {
+    // Position jumps between flashes but is stable within one flash.
+    val seed = (elapsed / 5.3f).toInt()
+    val originX = 120f + (seed * 137 % 500)
+    val bolt = Path().apply {
+        moveTo(originX, 0f)
+        lineTo(originX - 18f, 70f)
+        lineTo(originX + 6f, 78f)
+        lineTo(originX - 14f, 150f)
+        lineTo(originX + 20f, 60f)
+        lineTo(originX - 2f, 54f)
+        close()
+    }
+    drawPath(bolt, LightningColor.copy(alpha = alpha))
+}
+
+private fun DrawScope.drawClouds(distance: Float, color: Color, extra: Boolean) {
+    val count = if (extra) 7 else 4
     val span = GameConfig.WORLD_WIDTH + 260f
-    for (i in 0 until 4) {
-        val x = (GameConfig.WORLD_WIDTH + 130f) - ((distance * 0.25f + i * 335f) % span)
-        val y = 52f + (i % 3) * 42f
+    val spacing = span / count
+    for (i in 0 until count) {
+        val x = (GameConfig.WORLD_WIDTH + 130f) - ((distance * 0.25f + i * spacing) % span)
+        val y = 44f + (i % 3) * 40f + (i % 2) * 12f
         drawCloud(x, y, color)
     }
 }

@@ -65,6 +65,7 @@ import com.orisgames.dino.game.GameConfig
 import com.orisgames.dino.game.GameEngine
 import com.orisgames.dino.game.GamePhase
 import com.orisgames.dino.net.GlobalLeaderboardClient
+import com.orisgames.dino.net.syncLocalEntriesToGlobal
 import com.orisgames.dino.storage.LeaderboardStorage
 import com.orisgames.dino.storage.ScoreEntry
 import kotlin.math.min
@@ -101,6 +102,21 @@ fun GameScreen(storage: LeaderboardStorage) {
     // name-entry field goes away.
     LaunchedEffect(engine.awaitingRecordName) {
         if (!engine.awaitingRecordName) focusRequester.requestFocus()
+    }
+
+    // On launch: fetch the global list for the WORLD line, then upload any
+    // local records that belong on the global board but are missing there
+    // (scores made before the global board existed, or while offline).
+    LaunchedEffect(Unit) {
+        if (globalClient.isEnabled) {
+            runCatching {
+                val fetched = globalClient.top()
+                globalTop = fetched
+                globalTop = syncLocalEntriesToGlobal(engine.leaderboard.entries, fetched) {
+                    globalClient.submit(it.name, it.score)
+                }
+            }
+        }
     }
 
     // Refresh the global list every time the panel opens.
@@ -174,6 +190,7 @@ fun GameScreen(storage: LeaderboardStorage) {
         Hud(
             engine = engine,
             frameTick = frameTick,
+            worldBest = globalTop?.firstOrNull()?.score ?: 0,
             onShowLeaderboard = { showLeaderboard = true },
             onSubmitName = ::submitName,
         )
@@ -210,6 +227,7 @@ private fun Modifier.pressButton(onPress: () -> Unit): Modifier = pointerInput(o
 private fun Hud(
     engine: GameEngine,
     frameTick: Long,
+    worldBest: Int,
     onShowLeaderboard: () -> Unit,
     onSubmitName: (String) -> Unit,
 ) {
@@ -225,7 +243,10 @@ private fun Hud(
     ) {
         Column(Modifier.align(Alignment.TopEnd), horizontalAlignment = Alignment.End) {
             GameText("SCORE ${engine.score}", 26.sp)
-            GameText("BEST ${engine.bestScore}", 16.sp, Color(0xE6FFFFFF))
+            GameText("MY BEST ${engine.bestScore}", 16.sp, Color(0xE6FFFFFF))
+            if (worldBest > 0) {
+                GameText("WORLD $worldBest", 16.sp, Color(0xFFFFC93C))
+            }
         }
 
         if (engine.phase != GamePhase.Ready) {
