@@ -4,7 +4,6 @@ import com.orisgames.dino.storage.Leaderboard
 import com.orisgames.dino.storage.LeaderboardCodec
 import com.orisgames.dino.storage.LeaderboardStorage
 import com.orisgames.dino.storage.RandomNames
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -71,7 +70,14 @@ class GameEngine(
     val pops: List<ScorePop> get() = mutablePops
 
     internal var distanceToNextCactus = Float.MAX_VALUE
+    // A nugget is scheduled at the midpoint of each cactus gap; armed only
+    // when that gap is wide enough to be safely reachable.
     internal var distanceToNextNugget = Float.MAX_VALUE
+    internal var nuggetArmed = false
+
+    // Test-only lifetime spawn counters (reset in start()).
+    internal var cactusSpawnCount = 0
+    internal var nuggetSpawnCount = 0
 
     /** Single entry point for taps, clicks, and jump keys. */
     fun tap() {
@@ -100,7 +106,10 @@ class GameEngine(
         distance = 0f
         timeSinceGameOver = 0f
         distanceToNextCactus = GameConfig.FIRST_CACTUS_DISTANCE
-        distanceToNextNugget = nextNuggetGapDistance()
+        distanceToNextNugget = Float.MAX_VALUE
+        nuggetArmed = false
+        cactusSpawnCount = 0
+        nuggetSpawnCount = 0
         phase = GamePhase.Running
     }
 
@@ -168,38 +177,35 @@ class GameEngine(
         distanceToNextCactus -= step
         if (distanceToNextCactus <= 0f) {
             spawnCactus()
-            distanceToNextCactus = nextCactusGapDistance()
+            val gap = nextCactusGapDistance()
+            distanceToNextCactus = gap
+            armMidGapNugget(gap)
         }
-        distanceToNextNugget -= step
-        if (distanceToNextNugget <= 0f) {
-            // Re-arm the timer whether or not we spawn: on a conflicting slot
-            // we simply skip this nugget rather than deferring, which would
-            // starve nuggets entirely once cacti are densely spaced.
-            if (!nuggetSpawnConflicts()) spawnNugget()
-            distanceToNextNugget = nextNuggetGapDistance()
+        if (nuggetArmed) {
+            distanceToNextNugget -= step
+            if (distanceToNextNugget <= 0f) {
+                spawnNugget()
+                nuggetArmed = false
+            }
         }
     }
 
     /**
-     * Whether a nugget spawned right now would sit within the safety clearance
-     * of a cactus (present or the next scheduled one) — used to avoid baiting
-     * the player into a jump that lands on a cactus.
+     * Schedules one nugget at the horizontal midpoint of the just-created gap
+     * to the next cactus — but only if the gap is wide enough that jumping for
+     * it and recovering before the next cactus is feasible.
      */
-    internal fun nuggetSpawnConflicts(): Boolean {
-        val clearance = GameConfig.NUGGET_CACTUS_CLEARANCE_SECONDS * speed
-        val candidateX = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN
-        for (cactus in mutableCacti) {
-            if (abs(candidateX - (cactus.x + cactus.width / 2f)) < clearance) return true
-        }
-        // The next cactus spawns at candidateX once distanceToNextCactus more
-        // world scrolls by, so that is their spatial separation.
-        return distanceToNextCactus < clearance
+    internal fun armMidGapNugget(gap: Float) {
+        val gapSeconds = gap / speed
+        nuggetArmed = gapSeconds >= GameConfig.NUGGET_MIN_REACHABLE_GAP_SECONDS
+        distanceToNextNugget = gap / 2f
     }
 
     internal fun spawnCactus() {
         val width = randomBetween(GameConfig.CACTUS_MIN_WIDTH, maxCactusWidthForLevel(level))
         val height = randomBetween(GameConfig.CACTUS_MIN_HEIGHT, maxCactusHeightForLevel(level))
         mutableCacti.add(Cactus(x = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN, width = width, height = height))
+        cactusSpawnCount++
     }
 
     internal fun maxCactusHeightForLevel(level: Int): Float = min(
@@ -215,6 +221,7 @@ class GameEngine(
     internal fun spawnNugget() {
         val altitude = randomBetween(GameConfig.NUGGET_MIN_ALTITUDE, GameConfig.NUGGET_MAX_ALTITUDE)
         mutableNuggets.add(Nugget(x = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN, y = GameConfig.GROUND_Y - altitude))
+        nuggetSpawnCount++
     }
 
     internal fun minCactusGapSecondsForLevel(level: Int): Float = max(
@@ -238,9 +245,6 @@ class GameEngine(
             maxCactusGapSecondsForLevel(level),
         ) * projectedSpeed
     }
-
-    internal fun nextNuggetGapDistance(): Float =
-        randomBetween(GameConfig.MIN_NUGGET_GAP_SECONDS, GameConfig.MAX_NUGGET_GAP_SECONDS) * speed
 
     private fun collectNuggets() {
         val left = GameConfig.DINO_X - GameConfig.NUGGET_PICKUP_BONUS
@@ -330,7 +334,11 @@ class GameEngine(
      */
     fun submitRecordName(rawName: String): String {
         if (!awaitingRecordName) return lastRecordName ?: ""
-        val name = LeaderboardCodec.sanitizeName(rawName).ifBlank { RandomNames.next(random) }
+        // Sanitize the random fallback too, so the returned name always equals
+        // the stored one (a long random name would otherwise be truncated only
+        // in storage). leaderboard.add sanitizes again, harmlessly.
+        val name = LeaderboardCodec.sanitizeName(rawName)
+            .ifBlank { LeaderboardCodec.sanitizeName(RandomNames.next(random)) }
         lastRecordName = name
         lastRecordRank = leaderboard.add(name, score)
         bestScore = leaderboard.best
@@ -352,5 +360,6 @@ class GameEngine(
     internal fun debugDisableSpawning() {
         distanceToNextCactus = Float.MAX_VALUE
         distanceToNextNugget = Float.MAX_VALUE
+        nuggetArmed = false
     }
 }

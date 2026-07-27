@@ -51,18 +51,17 @@ object GameConfig {
     const val CACTUS_MIN_HEIGHT = 42f
     const val CACTUS_MAX_HEIGHT = 72f
 
-    const val MIN_NUGGET_GAP_SECONDS = 2.4f
-    const val MAX_NUGGET_GAP_SECONDS = 4.6f
-    // Altitude range (above ground) for nugget centers; only reachable mid-jump.
-    const val NUGGET_MIN_ALTITUDE = 115f
-    const val NUGGET_MAX_ALTITUDE = 190f
+    // One nugget spawns in the middle of every cactus gap. It hovers high
+    // enough that a grounded dino runs safely under it, so ignoring it is
+    // never a death — only jumping for it carries risk/reward.
+    const val NUGGET_MIN_ALTITUDE = 120f
+    const val NUGGET_MAX_ALTITUDE = 175f
     const val NUGGET_RADIUS = 18f
     const val NUGGET_PICKUP_BONUS = 8f
-    // A nugget won't spawn right on top of a cactus's arrival, but the
-    // clearance is small (well under the tightest gap) so nuggets keep
-    // appearing at high levels. Grabbing one near a cactus is a deliberate
-    // risk/reward choice, not a guaranteed trap.
-    const val NUGGET_CACTUS_CLEARANCE_SECONDS = 0.35f
+    // Skip the mid-gap nugget when the gap is too tight for a jump-and-recover,
+    // so the game never baits the player into an unavoidable grab. At the
+    // levels kids reach, gaps are wider than this, so nearly every gap gets one.
+    const val NUGGET_MIN_REACHABLE_GAP_SECONDS = 1.25f
 
     // Hitboxes are shrunk by this fraction on every side to be kid-friendly.
     const val HITBOX_FORGIVENESS = 0.18f

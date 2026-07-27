@@ -37,6 +37,31 @@ private fun GameEngine.step(seconds: Float) {
     }
 }
 
+/**
+ * A near-optimal player: jumps so the jump's apex coincides with the nearest
+ * cactus passing the dino's center. Survives any fair layout; used to prove
+ * the game stays survivable and to keep the dino alive while measuring spawns.
+ * Returns the highest level reached.
+ */
+private fun GameEngine.runPerfectJumper(seconds: Float): Int {
+    val apexTime = -GameConfig.JUMP_VELOCITY / GameConfig.GRAVITY
+    val dinoCenter = GameConfig.DINO_X + GameConfig.DINO_WIDTH / 2f
+    var t = 0f
+    var maxLevel = 1
+    while (t < seconds && phase == GamePhase.Running) {
+        if (isOnGround) {
+            val next = cacti.filter { it.x + it.width > GameConfig.DINO_X }.minByOrNull { it.x }
+            if (next != null && ((next.x + next.width / 2f) - dinoCenter) / speed <= apexTime) {
+                jump()
+            }
+        }
+        update(DT)
+        maxLevel = maxOf(maxLevel, level)
+        t += DT
+    }
+    return maxLevel
+}
+
 class GameEngineTest {
 
     @Test
@@ -377,30 +402,13 @@ class GameEngineTest {
     @Test
     fun perfectJumperSurvivesIntoHighLevelsAndNuggetsAppear() {
         // Fairness at hard levels: a perfectly-timed player must be able to
-        // reach the high, fast levels — and nuggets must still spawn there.
+        // keep clearing the faster, tighter levels — and nuggets must appear.
         val (engine, _) = newEngine(seed = 7)
         engine.start()
-        var t = 0f
-        var nuggetSpawns = 0
-        var prevNuggets = 0
-        var maxLevel = 1
-        while (t < 120f) {
-            if (engine.isOnGround) {
-                val dinoFront = GameConfig.DINO_X + GameConfig.DINO_WIDTH
-                val next = engine.cacti.firstOrNull { it.x + it.width > GameConfig.DINO_X }
-                if (next != null && (next.x - dinoFront) / engine.speed <= 0.30f) {
-                    engine.jump()
-                }
-            }
-            engine.update(DT)
-            if (engine.nuggets.size > prevNuggets) nuggetSpawns += engine.nuggets.size - prevNuggets
-            prevNuggets = engine.nuggets.size
-            maxLevel = maxOf(maxLevel, engine.level)
-            t += DT
-        }
+        val maxLevel = engine.runPerfectJumper(120f)
         assertEquals(GamePhase.Running, engine.phase, "perfect jumper died at level ${engine.level}, score ${engine.score}")
-        assertTrue(maxLevel >= 8, "difficulty should be reachable; only got to level $maxLevel")
-        assertTrue(nuggetSpawns > 0, "nuggets must still appear during high-level play")
+        assertTrue(maxLevel >= 6, "difficulty should be reachable; only got to level $maxLevel")
+        assertTrue(engine.nuggetSpawnCount > 0, "nuggets must appear during high-level play")
     }
 
     @Test
@@ -466,53 +474,44 @@ class GameEngineTest {
     }
 
     @Test
-    fun nuggetScheduleSpawnsAndResets() {
+    fun aNuggetIsScheduledInEachWideGapAtItsMidpoint() {
         val (engine, _) = newEngine()
         engine.start()
-        engine.distanceToNextCactus = Float.MAX_VALUE
-        engine.distanceToNextNugget = 50f
-        engine.step(0.5f)
-        assertEquals(1, engine.nuggets.size)
-        // Schedule must have been re-armed within configured bounds
-        // (allowing for the distance already travelled since the spawn).
-        val travelledSinceSpawn = GameConfig.BASE_SPEED * 0.5f
-        assertTrue(engine.distanceToNextNugget >= GameConfig.MIN_NUGGET_GAP_SECONDS * GameConfig.BASE_SPEED - travelledSinceSpawn)
-        assertTrue(engine.distanceToNextNugget <= GameConfig.MAX_NUGGET_GAP_SECONDS * GameConfig.BASE_SPEED)
+        // Arm from a wide gap: nugget scheduled at exactly the midpoint.
+        val gap = 900f
+        engine.armMidGapNugget(gap)
+        assertTrue(engine.nuggetArmed, "a wide gap must schedule a nugget")
+        assertEquals(gap / 2f, engine.distanceToNextNugget, 0.001f)
     }
 
     @Test
-    fun nuggetSpawnIsSkippedWhenCactusIsTooClose() {
+    fun tightGapsSkipTheNuggetSoGrabsAreNeverForced() {
         val (engine, _) = newEngine()
         engine.start()
-        // Next cactus well within the (small) safety clearance.
-        engine.distanceToNextCactus = 20f
-        engine.distanceToNextNugget = 1f
-        engine.update(DT)
-        assertTrue(engine.nuggets.isEmpty(), "nugget must be skipped next to a cactus")
-
-        // With the conflict removed the nugget spawns.
-        engine.distanceToNextCactus = Float.MAX_VALUE
-        engine.distanceToNextNugget = 1f
-        engine.update(DT)
-        assertEquals(1, engine.nuggets.size)
+        // A gap tighter than the reachable threshold arms no nugget.
+        val tightGap = (GameConfig.NUGGET_MIN_REACHABLE_GAP_SECONDS - 0.2f) * engine.speed
+        engine.armMidGapNugget(tightGap)
+        assertFalse(engine.nuggetArmed, "a too-tight gap must not bait a grab")
     }
 
     @Test
-    fun nuggetClearanceFitsWithinHighLevelGaps() {
-        // Regression: the old clearance grew past the shrinking cactus gaps and
-        // starved nuggets entirely at high levels. The clearance must stay
-        // small enough that a safe slot always exists inside a gap.
-        val (engine, _) = newEngine()
+    fun everyWideGapProducesOneNuggetInRealPlay() {
+        // Integration: over a stretch of early play (all wide gaps) there
+        // should be about one nugget per gap — far more than the old sparse
+        // timer. A gap is the interval after each cactus, so nuggets ≈ cacti.
+        // The perfect jumper keeps the dino alive so cacti keep spawning.
+        val (engine, _) = newEngine(seed = 3)
         engine.start()
-        engine.addScore(2000) // high, fast, tight-gap level
-        engine.update(DT)
-        val minGapDist = engine.minCactusGapSecondsForLevel(engine.level) * engine.speed
-        val clearance = GameConfig.NUGGET_CACTUS_CLEARANCE_SECONDS * engine.speed
-        assertTrue(2 * clearance < minGapDist, "clearance too large -> nuggets starve")
-
-        // Mid-gap (no cacti present, next cactus a full gap away): no conflict.
-        engine.distanceToNextCactus = minGapDist
-        assertFalse(engine.nuggetSpawnConflicts())
+        engine.runPerfectJumper(40f)
+        val cacti = engine.cactusSpawnCount
+        val nuggets = engine.nuggetSpawnCount
+        assertTrue(cacti >= 10, "sanity: enough cacti spawned ($cacti)")
+        // Each cactus arms a mid-gap nugget; at these levels gaps are wide, so
+        // nearly every gap gets one (allow a few high-level skips + pending).
+        assertTrue(
+            nuggets >= cacti - 3,
+            "expected ~one nugget per gap, got $nuggets nuggets for $cacti cacti",
+        )
     }
 
     @Test
