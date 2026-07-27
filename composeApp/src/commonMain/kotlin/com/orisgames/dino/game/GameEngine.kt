@@ -4,6 +4,7 @@ import com.orisgames.dino.storage.Leaderboard
 import com.orisgames.dino.storage.LeaderboardCodec
 import com.orisgames.dino.storage.LeaderboardStorage
 import com.orisgames.dino.storage.RandomNames
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -171,38 +172,32 @@ class GameEngine(
         }
         distanceToNextNugget -= step
         if (distanceToNextNugget <= 0f) {
-            val deferral = nuggetSpawnConflictShift()
-            if (deferral > 0f) {
-                distanceToNextNugget = deferral
-            } else {
-                spawnNugget()
-                distanceToNextNugget = nextNuggetGapDistance()
-            }
+            // Re-arm the timer whether or not we spawn: on a conflicting slot
+            // we simply skip this nugget rather than deferring, which would
+            // starve nuggets entirely once cacti are densely spaced.
+            if (!nuggetSpawnConflicts()) spawnNugget()
+            distanceToNextNugget = nextNuggetGapDistance()
         }
     }
 
     /**
-     * Distance to postpone a nugget spawn so it keeps a safe horizontal
-     * clearance from every cactus (present or already scheduled). Chasing a
-     * nugget must never bait the player into an unavoidable collision.
+     * Whether a nugget spawned right now would sit within the safety clearance
+     * of a cactus (present or the next scheduled one) — used to avoid baiting
+     * the player into a jump that lands on a cactus.
      */
-    internal fun nuggetSpawnConflictShift(): Float {
+    internal fun nuggetSpawnConflicts(): Boolean {
         val clearance = GameConfig.NUGGET_CACTUS_CLEARANCE_SECONDS * speed
         val candidateX = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN
-        var shift = 0f
         for (cactus in mutableCacti) {
-            val gap = candidateX - (cactus.x + cactus.width / 2f)
-            if (gap < clearance) shift = max(shift, clearance - gap)
+            if (abs(candidateX - (cactus.x + cactus.width / 2f)) < clearance) return true
         }
-        // The next cactus will spawn at candidateX + distanceToNextCactus.
-        if (distanceToNextCactus < clearance) {
-            shift = max(shift, clearance + distanceToNextCactus)
-        }
-        return shift
+        // The next cactus spawns at candidateX once distanceToNextCactus more
+        // world scrolls by, so that is their spatial separation.
+        return distanceToNextCactus < clearance
     }
 
     internal fun spawnCactus() {
-        val width = randomBetween(GameConfig.CACTUS_MIN_WIDTH, GameConfig.CACTUS_MAX_WIDTH)
+        val width = randomBetween(GameConfig.CACTUS_MIN_WIDTH, maxCactusWidthForLevel(level))
         val height = randomBetween(GameConfig.CACTUS_MIN_HEIGHT, maxCactusHeightForLevel(level))
         mutableCacti.add(Cactus(x = GameConfig.WORLD_WIDTH + GameConfig.SPAWN_MARGIN, width = width, height = height))
     }
@@ -210,6 +205,11 @@ class GameEngine(
     internal fun maxCactusHeightForLevel(level: Int): Float = min(
         GameConfig.CACTUS_MAX_HEIGHT_CAP,
         GameConfig.CACTUS_MAX_HEIGHT + (level - 1) * GameConfig.CACTUS_HEIGHT_STEP_PER_LEVEL,
+    )
+
+    internal fun maxCactusWidthForLevel(level: Int): Float = min(
+        GameConfig.CACTUS_MAX_WIDTH_CAP,
+        GameConfig.CACTUS_MAX_WIDTH + (level - 1) * GameConfig.CACTUS_WIDTH_STEP_PER_LEVEL,
     )
 
     internal fun spawnNugget() {

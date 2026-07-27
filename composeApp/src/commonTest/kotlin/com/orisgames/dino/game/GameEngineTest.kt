@@ -375,6 +375,35 @@ class GameEngineTest {
     }
 
     @Test
+    fun perfectJumperSurvivesIntoHighLevelsAndNuggetsAppear() {
+        // Fairness at hard levels: a perfectly-timed player must be able to
+        // reach the high, fast levels — and nuggets must still spawn there.
+        val (engine, _) = newEngine(seed = 7)
+        engine.start()
+        var t = 0f
+        var nuggetSpawns = 0
+        var prevNuggets = 0
+        var maxLevel = 1
+        while (t < 120f) {
+            if (engine.isOnGround) {
+                val dinoFront = GameConfig.DINO_X + GameConfig.DINO_WIDTH
+                val next = engine.cacti.firstOrNull { it.x + it.width > GameConfig.DINO_X }
+                if (next != null && (next.x - dinoFront) / engine.speed <= 0.30f) {
+                    engine.jump()
+                }
+            }
+            engine.update(DT)
+            if (engine.nuggets.size > prevNuggets) nuggetSpawns += engine.nuggets.size - prevNuggets
+            prevNuggets = engine.nuggets.size
+            maxLevel = maxOf(maxLevel, engine.level)
+            t += DT
+        }
+        assertEquals(GamePhase.Running, engine.phase, "perfect jumper died at level ${engine.level}, score ${engine.score}")
+        assertTrue(maxLevel >= 8, "difficulty should be reachable; only got to level $maxLevel")
+        assertTrue(nuggetSpawns > 0, "nuggets must still appear during high-level play")
+    }
+
+    @Test
     fun tapWhileRunningJumpsAndMidAirTapIsIgnored() {
         val (engine, _) = newEngine()
         engine.tap() // Ready -> Running
@@ -452,20 +481,38 @@ class GameEngineTest {
     }
 
     @Test
-    fun nuggetSpawnIsDeferredWhenCactusIsTooClose() {
+    fun nuggetSpawnIsSkippedWhenCactusIsTooClose() {
         val (engine, _) = newEngine()
         engine.start()
-        // Next cactus arrives well within the safety clearance.
-        engine.distanceToNextCactus = 100f
+        // Next cactus well within the (small) safety clearance.
+        engine.distanceToNextCactus = 20f
         engine.distanceToNextNugget = 1f
         engine.update(DT)
-        assertTrue(engine.nuggets.isEmpty(), "nugget must be deferred near a scheduled cactus")
+        assertTrue(engine.nuggets.isEmpty(), "nugget must be skipped next to a cactus")
 
-        // With the conflict removed the nugget spawns immediately.
+        // With the conflict removed the nugget spawns.
         engine.distanceToNextCactus = Float.MAX_VALUE
         engine.distanceToNextNugget = 1f
         engine.update(DT)
         assertEquals(1, engine.nuggets.size)
+    }
+
+    @Test
+    fun nuggetClearanceFitsWithinHighLevelGaps() {
+        // Regression: the old clearance grew past the shrinking cactus gaps and
+        // starved nuggets entirely at high levels. The clearance must stay
+        // small enough that a safe slot always exists inside a gap.
+        val (engine, _) = newEngine()
+        engine.start()
+        engine.addScore(2000) // high, fast, tight-gap level
+        engine.update(DT)
+        val minGapDist = engine.minCactusGapSecondsForLevel(engine.level) * engine.speed
+        val clearance = GameConfig.NUGGET_CACTUS_CLEARANCE_SECONDS * engine.speed
+        assertTrue(2 * clearance < minGapDist, "clearance too large -> nuggets starve")
+
+        // Mid-gap (no cacti present, next cactus a full gap away): no conflict.
+        engine.distanceToNextCactus = minGapDist
+        assertFalse(engine.nuggetSpawnConflicts())
     }
 
     @Test

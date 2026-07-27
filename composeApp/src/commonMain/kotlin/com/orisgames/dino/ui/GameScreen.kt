@@ -272,20 +272,29 @@ private fun Hud(
         }
 
         when (engine.phase) {
-            GamePhase.Ready -> ReadyOverlay(engine, onShowLeaderboard)
+            GamePhase.Ready -> ReadyOverlay(engine)
             GamePhase.GameOver ->
                 if (engine.awaitingRecordName) {
                     NameEntryOverlay(engine, onSubmitName)
                 } else {
-                    GameOverOverlay(engine, onShowLeaderboard)
+                    GameOverOverlay(engine)
                 }
             GamePhase.Running -> Unit
+        }
+
+        // TOP 10 lives in the bottom-right corner, away from the centered
+        // "TAP TO START" / replay tap zones so it can't be misclicked. Hidden
+        // during play and while the name dialog is open.
+        val showLeaderboardButton = engine.phase == GamePhase.Ready ||
+            (engine.phase == GamePhase.GameOver && !engine.awaitingRecordName)
+        if (showLeaderboardButton) {
+            PillButton("TOP 10", onShowLeaderboard, Modifier.align(Alignment.BottomEnd))
         }
     }
 }
 
 @Composable
-private fun BoxScope.ReadyOverlay(engine: GameEngine, onShowLeaderboard: () -> Unit) {
+private fun BoxScope.ReadyOverlay(engine: GameEngine) {
     Column(
         Modifier.align(Alignment.Center).padding(bottom = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -306,8 +315,6 @@ private fun BoxScope.ReadyOverlay(engine: GameEngine, onShowLeaderboard: () -> U
             Color(0xFFFFF3B0),
             Modifier.graphicsLayer { alpha = pulse },
         )
-        Spacer(Modifier.height(24.dp))
-        PillButton("TOP 10", onShowLeaderboard)
     }
 }
 
@@ -366,7 +373,7 @@ private fun BoxScope.NameEntryOverlay(engine: GameEngine, onSubmit: (String) -> 
 }
 
 @Composable
-private fun BoxScope.GameOverOverlay(engine: GameEngine, onShowLeaderboard: () -> Unit) {
+private fun BoxScope.GameOverOverlay(engine: GameEngine) {
     Surface(
         modifier = Modifier.align(Alignment.Center),
         shape = RoundedCornerShape(28.dp),
@@ -445,8 +452,6 @@ private fun BoxScope.GameOverOverlay(engine: GameEngine, onShowLeaderboard: () -
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.graphicsLayer { alpha = if (ready) pulse else 0f },
             )
-            Spacer(Modifier.height(12.dp))
-            PillButton("TOP 10", onShowLeaderboard)
         }
     }
 }

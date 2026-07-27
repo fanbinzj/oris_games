@@ -13,16 +13,25 @@ object GameConfig {
     const val JUMP_VELOCITY = -1050f
 
     const val BASE_SPEED = 280f
-    const val MAX_SPEED = 620f
+    // High ceiling so the game keeps getting faster through ~level 21 instead
+    // of flattening early. Per-frame travel at this speed (1200/60 = 20 units)
+    // stays well under a cactus's width, so collisions never tunnel.
+    const val MAX_SPEED = 1200f
     // Each level-up (every MILESTONE_STEP points) is a distinct, noticeable
-    // difficulty step: faster world, denser and taller cacti.
-    const val SPEED_STEP_PER_LEVEL = 45f
+    // difficulty step: faster world, tighter gaps, taller and wider cacti.
+    const val SPEED_STEP_PER_LEVEL = 46f
     const val CACTUS_GAP_MIN_STEP_PER_LEVEL = 0.02f
     const val CACTUS_GAP_MAX_STEP_PER_LEVEL = 0.08f
-    const val MIN_CACTUS_GAP_FLOOR = 0.95f
-    const val MAX_CACTUS_GAP_FLOOR = 1.35f
+    // Floors kept just above the jump air-time (0.84s) so a perfectly-timed
+    // player can always survive; the challenge comes from speed + width.
+    const val MIN_CACTUS_GAP_FLOOR = 0.92f
+    const val MAX_CACTUS_GAP_FLOOR = 1.25f
     const val CACTUS_HEIGHT_STEP_PER_LEVEL = 4f
-    const val CACTUS_MAX_HEIGHT_CAP = 88f
+    const val CACTUS_MAX_HEIGHT_CAP = 96f
+    // Wider cacti at higher levels narrow the jump window -> more precise
+    // timing required. Always clearable: jump covers speed*0.84 >> any width.
+    const val CACTUS_WIDTH_STEP_PER_LEVEL = 2.6f
+    const val CACTUS_MAX_WIDTH_CAP = 74f
 
     const val CACTUS_SCORE = 10
     const val NUGGET_SCORE = 25
@@ -49,9 +58,11 @@ object GameConfig {
     const val NUGGET_MAX_ALTITUDE = 190f
     const val NUGGET_RADIUS = 18f
     const val NUGGET_PICKUP_BONUS = 8f
-    // A nugget never spawns closer than this (in seconds of travel) to a
-    // cactus, so chasing a nugget cannot bait the player into a death.
-    const val NUGGET_CACTUS_CLEARANCE_SECONDS = 0.9f
+    // A nugget won't spawn right on top of a cactus's arrival, but the
+    // clearance is small (well under the tightest gap) so nuggets keep
+    // appearing at high levels. Grabbing one near a cactus is a deliberate
+    // risk/reward choice, not a guaranteed trap.
+    const val NUGGET_CACTUS_CLEARANCE_SECONDS = 0.35f
 
     // Hitboxes are shrunk by this fraction on every side to be kid-friendly.
     const val HITBOX_FORGIVENESS = 0.18f
