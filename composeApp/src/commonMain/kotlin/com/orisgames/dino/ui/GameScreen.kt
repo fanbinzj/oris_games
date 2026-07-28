@@ -65,7 +65,6 @@ import com.orisgames.dino.game.GameConfig
 import com.orisgames.dino.game.GameEngine
 import com.orisgames.dino.game.GamePhase
 import com.orisgames.dino.net.GlobalLeaderboardClient
-import com.orisgames.dino.net.syncLocalEntriesToGlobal
 import com.orisgames.dino.storage.LeaderboardStorage
 import com.orisgames.dino.storage.ScoreEntry
 import kotlin.math.min
@@ -104,18 +103,14 @@ fun GameScreen(storage: LeaderboardStorage) {
         if (!engine.awaitingRecordName) focusRequester.requestFocus()
     }
 
-    // On launch: fetch the global list for the WORLD line, then upload any
-    // local records that belong on the global board but are missing there
-    // (scores made before the global board existed, or while offline).
+    // On launch: fetch the global list for the WORLD line.
+    // NOTE: we intentionally do NOT auto-upload this device's local records.
+    // Doing so re-injected old (easy-mode) high scores back onto the global
+    // board every launch. New scores reach the board only via a real run's
+    // submitName() below.
     LaunchedEffect(Unit) {
         if (globalClient.isEnabled) {
-            runCatching {
-                val fetched = globalClient.top()
-                globalTop = fetched
-                globalTop = syncLocalEntriesToGlobal(engine.leaderboard.entries, fetched) {
-                    globalClient.submit(it.name, it.score)
-                }
-            }
+            runCatching { globalTop = globalClient.top() }
         }
     }
 
